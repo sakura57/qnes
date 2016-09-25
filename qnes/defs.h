@@ -96,4 +96,6 @@ typedef union {
 typedef unsigned char oamaddr_t;
 typedef unsigned char oamdata_t;
 
+void draw_pixel(int x, int y);
+
 #endif

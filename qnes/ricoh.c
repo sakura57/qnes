@@ -2,10 +2,16 @@
 
 void initialize(R2A03 *proc, void *memory)
 {
+	proc->critical = 0;
 	proc->memory = memory;
+}
+
+void reset(R2A03 *proc)
+{
 	proc->a.byte = proc->x.byte = proc->y.byte = proc->p.byte = 0;
 	proc->p.bit.unused = 1;
 	proc->s.byte = 0xFF;
+	proc->pc.word = fetch_word(proc, 0xFFFC);
 }
 
 void cycle(R2A03 *proc)
@@ -16,16 +22,46 @@ void cycle(R2A03 *proc)
 	opcode.byte = fetch_next_byte(proc);
 
 	//execute the associated instruction handler
+	if(ih[opcode.byte] == &ih_brk) {
+		proc->critical = 1;
+	}
 	ih[opcode.byte](proc);
 }
 
 void write_byte(R2A03 *proc, unsigned short addr, unsigned char byte)
 {
-	((unsigned char*)proc->memory)[addr] = byte;
-	if(addr == 0x3000)
-	{
-		printf("Test register received %c\n", byte);
+	if(addr < 0x2000) {
+		((unsigned char*)proc->memory)[addr&0x7FF] = byte;
+		((unsigned char*)proc->memory)[addr&0x7FF+0x800] = byte;
+		((unsigned char*)proc->memory)[addr&0x7FF+0x1000] = byte;
+		((unsigned char*)proc->memory)[addr&0x7FF+0x1800] = byte;
 	}
+	((unsigned char*)proc->memory)[addr] = byte;
+}
+
+word_t makeword(unsigned short word)
+{
+	word_t w;
+	w.word = word;
+	return w;
+}
+
+void set_nmi_vector(R2A03 *proc, word_t addr)
+{
+	((unsigned char*)proc->memory)[0xFFFA] = addr.lo.byte;
+	((unsigned char*)proc->memory)[0xFFFB] = addr.hi.byte;
+}
+
+void set_irqbrk_vector(R2A03 *proc, word_t addr)
+{
+	((unsigned char*)proc->memory)[0xFFFE] = addr.lo.byte;
+	((unsigned char*)proc->memory)[0xFFFF] = addr.hi.byte;
+}
+
+void set_reset_vector(R2A03 *proc, word_t addr)
+{
+	((unsigned char*)proc->memory)[0xFFFC] = addr.lo.byte;
+	((unsigned char*)proc->memory)[0xFFFD] = addr.hi.byte;
 }
 
 unsigned char fetch_next_byte(R2A03 *proc)
@@ -48,7 +84,10 @@ unsigned short fetch_next_word(R2A03 *proc)
 
 unsigned short fetch_word(R2A03 *proc, unsigned short addr)
 {
-	return *(((unsigned short*)proc->memory) + addr);
+	word_t w;
+	w.lo.byte = ((unsigned char*)proc->memory)[addr++];
+	w.hi.byte = ((unsigned char*)proc->memory)[addr++];
+	return w.word;
 }
 
 void push(R2A03 *proc, unsigned char byte)
@@ -111,6 +150,10 @@ unsigned char pull(R2A03 *proc)
 #define OP_ADC() unsigned short result = proc->a.byte + byte + (proc->p.bit.carry?1:0)
 #define OP_SBC() unsigned short result = proc->a.byte - byte - (proc->p.bit.carry?0:1)
 
+#define OP_SBCSA() unsigned short result = proc->a.byte - byte
+#define OP_SBCSX() unsigned short result = proc->x.byte - byte
+#define OP_SBCSY() unsigned short result = proc->y.byte - byte
+
 #define OP_ROL() unsigned char result = (byte << 1) | (proc->p.bit.carry?1:0);  \
 	SETC((byte & 0x80) == 0x80)
 #define OP_ROR() unsigned char result = (byte >> 1) | (proc->p.bit.carry?0x80:0);  \
@@ -145,6 +188,9 @@ unsigned char pull(R2A03 *proc)
 #define FN_BRANCH_OP(n,c) void n(R2A03 *proc) { \
 	signed char offs = fetch_next_byte(proc); \
 	if(c) { proc->pc.word = (unsigned short)((signed int)proc->pc.word + offs); } }
+#define FN_COMPARE_OP(n,i,o) void n(R2A03 *proc) { \
+	i(); o(); SETC_S(result); SETZ(result & 0xFF); \
+	SETN(result);  }
 	
 
 FN_BRANCH_OP(ih_beq, proc->p.bit.zero)
@@ -167,6 +213,23 @@ FN_CLEAR_OP(ih_cli, irq)
 
 FN_SET_OP(ih_sed, decimal)
 FN_CLEAR_OP(ih_cld, decimal)
+
+FN_COMPARE_OP(ih_cmp_imm, INI_IMM, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_izx, INI_IZX, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_izy, INI_IZY, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_zp, INI_ZP, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_zpx, INI_ZPX, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_abs, INI_ABS, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_abx, INI_ABX, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_aby, INI_ABY, OP_SBCSA)
+
+FN_COMPARE_OP(ih_cpx_imm, INI_IMM, OP_SBCSX)
+FN_COMPARE_OP(ih_cpx_zp, INI_ZP, OP_SBCSX)
+FN_COMPARE_OP(ih_cpx_abs, INI_ABS, OP_SBCSX)
+
+FN_COMPARE_OP(ih_cpy_imm, INI_IMM, OP_SBCSY)
+FN_COMPARE_OP(ih_cpy_zp, INI_ZP, OP_SBCSY)
+FN_COMPARE_OP(ih_cpy_abs, INI_ABS, OP_SBCSY)
 
 FN_XFER_OP(ih_tax, proc->a.byte, proc->x.byte)
 FN_XFER_OP(ih_txa, proc->x.byte, proc->a.byte)
@@ -305,11 +368,11 @@ void ih_brk(R2A03 *proc)
 }
 
 /*
-	BRK handler
+	NOP handler
 */
 void ih_nop(R2A03 *proc)
 {
-	//todo
+	//do nothing
 }
 
 /*
@@ -318,6 +381,82 @@ void ih_nop(R2A03 *proc)
 void ih_php(R2A03 *proc)
 {
 	push(proc, proc->p.byte);
+}
+
+/*
+	BIT handler
+*/
+void ih_bit_abs(R2A03 *proc)
+{
+	unsigned short addr = fetch_next_word(proc);
+	unsigned char byte = fetch_byte(proc, addr);
+	SETN(byte);
+	proc->p.bit.overflow = byte & 0x40;
+	proc->p.bit.zero = byte & proc->a.byte;
+}
+
+/*
+	BIT handler
+*/
+void ih_bit_zp(R2A03 *proc)
+{
+	unsigned char addr = fetch_next_byte(proc);
+	unsigned char byte = fetch_byte(proc, (unsigned short)addr);
+	SETN(byte);
+	proc->p.bit.overflow = byte & 0x40;
+	proc->p.bit.zero = byte & proc->a.byte;
+}
+
+/*
+	JMP handler
+*/
+void ih_jmp_imm(R2A03 *proc)
+{
+	unsigned short addr = fetch_next_word(proc);
+	proc->pc.word = addr;
+}
+
+/*
+	JMP handler
+*/
+void ih_jmp_ind(R2A03 *proc)
+{
+	unsigned short addr = fetch_next_word(proc);
+	unsigned short word = fetch_word(proc, addr);
+	proc->pc.word = word;
+}
+
+/*
+	JSR handler
+*/
+void ih_jsr(R2A03 *proc)
+{
+	unsigned short addr = fetch_next_word(proc);
+	push(proc, ((proc->pc.word--)>>8)&0xFF);
+	push(proc, proc->pc.word&0xFF);
+	proc->pc.word = addr;
+}
+
+/*
+	RTS handler
+*/
+void ih_rts(R2A03 *proc)
+{
+	unsigned short addr = pull(proc);
+	addr += (pull(proc) << 8) + 1;
+	proc->pc.word = addr;
+}
+
+/*
+	RTI handler
+*/
+void ih_rti(R2A03 *proc)
+{
+	unsigned short addr;
+	proc->p.byte = pull(proc);
+	addr = pull(proc);
+	addr |= pull(proc) << 8;
+	proc->pc.word = addr;
 }
 
 /*
@@ -357,7 +496,7 @@ static const instructionHandler ih[256] = {
 //	18				19				1A				1B				1C				1D				1E				1F
 	&ih_clc,		&ih_ora_aby,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_ora_abx,	&ih_asl_abx,	&ih_brk,
 //	20				21				22				23				24				25				26				27
-	&ih_brk,		&ih_and_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_and_zp,		&ih_rol_zp,		&ih_brk,
+	&ih_jsr,		&ih_and_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_and_zp,		&ih_rol_zp,		&ih_brk,
 //	28				29				2A				2B				2C				2D				2E				2F
 	&ih_plp,		&ih_and_imm,	&ih_rol,		&ih_brk,		&ih_brk,		&ih_and_abs,	&ih_rol_abs,	&ih_brk,
 //	30				31				32				33				34				35				36				37
@@ -365,17 +504,17 @@ static const instructionHandler ih[256] = {
 //	38				39				3A				3B				3C				3D				3E				3F
 	&ih_sec,		&ih_and_aby,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_and_abx,	&ih_rol_abx,	&ih_brk,
 //	40				41				42				43				44				45				46				47
-	&ih_brk,		&ih_eor_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_eor_zp,		&ih_lsr_zp,		&ih_brk,
+	&ih_rti,		&ih_eor_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_eor_zp,		&ih_lsr_zp,		&ih_brk,
 //	48				49				4A				4B				4C				4D				4E				4F
-	&ih_pha,		&ih_eor_imm,	&ih_lsr,		&ih_brk,		&ih_brk,		&ih_eor_abs,	&ih_lsr_abs,	&ih_brk,
+	&ih_pha,		&ih_eor_imm,	&ih_lsr,		&ih_brk,		&ih_jmp_imm,	&ih_eor_abs,	&ih_lsr_abs,	&ih_brk,
 //	50				51				52				53				54				55				56				57
 	&ih_bvc,		&ih_eor_izy,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_eor_zpx,	&ih_lsr_zpx,	&ih_brk,
 //	58				59				5A				5B				5C				5D				5E				5F
 	&ih_cli,		&ih_eor_aby,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_eor_abx,	&ih_lsr_abx,	&ih_brk,
 //	60				61				62				63				64				65				66				67
-	&ih_brk,		&ih_adc_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_adc_zp,		&ih_ror_zp,		&ih_brk,
+	&ih_rts,		&ih_adc_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_adc_zp,		&ih_ror_zp,		&ih_brk,
 //	68				69				6A				6B				6C				6D				6E				6F
-	&ih_pla,		&ih_adc_imm,	&ih_ror,		&ih_brk,		&ih_brk,		&ih_adc_abs,	&ih_ror_abs,	&ih_brk,
+	&ih_pla,		&ih_adc_imm,	&ih_ror,		&ih_brk,		&ih_jmp_ind,	&ih_adc_abs,	&ih_ror_abs,	&ih_brk,
 //	70				71				72				73				74				75				76				77
 	&ih_bvs,		&ih_adc_izy,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_adc_zpx,	&ih_ror_zpx,	&ih_brk,
 //	78				79				7A				7B				7C				7D				7E				7F
@@ -397,19 +536,19 @@ static const instructionHandler ih[256] = {
 //	B8				B9				BA				BB				BC				BD				BE				BF
 	&ih_clv,		&ih_lda_aby,	&ih_tsx,		&ih_brk,		&ih_ldy_abx,	&ih_lda_abx,	&ih_ldx_aby,	&ih_brk,
 //	C0				C1				C2				C3				C4				C5				C6				C7
-	&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_dec_zp,		&ih_brk,
+	&ih_cpy_imm,	&ih_cmp_izx,	&ih_brk,		&ih_brk,		&ih_cpy_zp,		&ih_cmp_zp,		&ih_dec_zp,		&ih_brk,
 //	C8				C9				CA				CB				CC				CD				CE				CF
-	&ih_iny,		&ih_brk,		&ih_dex,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_dec_abs,	&ih_brk,
+	&ih_iny,		&ih_cmp_imm,	&ih_dex,		&ih_brk,		&ih_cpy_abs,	&ih_cmp_abs,	&ih_dec_abs,	&ih_brk,
 //	D0				D1				D2				D3				D4				D5				D6				D7
-	&ih_bne,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_dec_zpx,	&ih_brk,
+	&ih_bne,		&ih_cmp_izy,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_cmp_zpx,	&ih_dec_zpx,	&ih_brk,
 //	D8				D9				DA				DB				DC				DD				DE				DF
-	&ih_cld,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_dec_abx,	&ih_brk,
+	&ih_cld,		&ih_cmp_aby,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_cmp_abx,	&ih_dec_abx,	&ih_brk,
 //	E0				E1				E2				E3				E4				E5				E6				E7
-	&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_inc_zp,		&ih_brk,
+	&ih_cpx_imm,	&ih_sbc_izx,	&ih_brk,		&ih_brk,		&ih_cpx_zp,		&ih_sbc_zp,		&ih_inc_zp,		&ih_brk,
 //	E8				E9				EA				EB				EC				ED				EE				EF
-	&ih_inx,		&ih_brk,		&ih_nop,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_inc_abs,	&ih_brk,
+	&ih_inx,		&ih_sbc_imm,	&ih_nop,		&ih_brk,		&ih_cpx_abs,	&ih_sbc_abs,	&ih_inc_abs,	&ih_brk,
 //	F0				F1				F2				F3				F4				F5				F6				F7
-	&ih_beq,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_inc_zpx,	&ih_brk,
+	&ih_beq,		&ih_sbc_izy,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_sbc_zpx,	&ih_inc_zpx,	&ih_brk,
 //	F8				F9				FA				FB				FC				FD				FE				FF
-	&ih_sed,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_brk,		&ih_inc_abx,	&ih_brk
+	&ih_sed,		&ih_sbc_aby,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_sbc_abx,	&ih_inc_abx,	&ih_brk
 };

@@ -24,17 +24,27 @@ typedef struct {
 
 	word_t pc;			//program counter
 
+	unsigned char critical;
+
 	void * memory;
 } R2A03;
 
 typedef void (__cdecl *instructionHandler)(R2A03 *);
 
+void write_byte(R2A03 *, unsigned short, unsigned char);
 void initialize(R2A03 *, void *);
 unsigned char fetch_next_byte(R2A03 *);
 unsigned char fetch_byte(R2A03 *, unsigned short);
 unsigned short fetch_next_word(R2A03 *);
 unsigned short fetch_word(R2A03 *, unsigned short);
+word_t makeword(unsigned short);
+void set_reset_vector(R2A03 *, word_t);
+void set_irqbrk_vector(R2A03 *, word_t);
+void set_nmi_vector(R2A03 *, word_t);
 void cycle(R2A03 *);
+void reset(R2A03 *);
+
+void ih_brk(R2A03 *);
 
 
 ///////////////////////////////////////////////////////////////////
