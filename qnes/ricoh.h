@@ -29,7 +29,7 @@ typedef struct {
 	void * memory;
 } R2A03;
 
-typedef void (__cdecl *instructionHandler)(R2A03 *);
+typedef int (__cdecl *instructionHandler)(R2A03 *);
 
 void write_byte(R2A03 *, unsigned short, unsigned char);
 void initialize(R2A03 *, void *);
@@ -41,16 +41,16 @@ word_t makeword(unsigned short);
 void set_reset_vector(R2A03 *, word_t);
 void set_irqbrk_vector(R2A03 *, word_t);
 void set_nmi_vector(R2A03 *, word_t);
-void cycle(R2A03 *);
+int cycle(R2A03 *);
 void reset(R2A03 *);
 
-void ih_brk(R2A03 *);
+int ih_brk(R2A03 *);
 
 
 ///////////////////////////////////////////////////////////////////
 //                 INSTRUCTION HANDLER DEFS                      //
 ///////////////////////////////////////////////////////////////////
 
-static const instructionHandler ih[256];
+static instructionHandler ih[256];
 
 #endif

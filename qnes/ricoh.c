@@ -14,7 +14,7 @@ void reset(R2A03 *proc)
 	proc->pc.word = fetch_word(proc, 0xFFFC);
 }
 
-void cycle(R2A03 *proc)
+int cycle(R2A03 *proc)
 {
 	byte_t opcode;
 
@@ -25,7 +25,7 @@ void cycle(R2A03 *proc)
 	if(ih[opcode.byte] == &ih_brk) {
 		proc->critical = 1;
 	}
-	ih[opcode.byte](proc);
+	return ih[opcode.byte](proc);
 }
 
 void write_byte(R2A03 *proc, unsigned short addr, unsigned char byte)
@@ -164,329 +164,341 @@ unsigned char pull(R2A03 *proc)
 #define OP_INC() unsigned char result = ++byte
 #define OP_DEC() unsigned char result = --byte
 
-#define FN_LOGIC_OP(n,i,o) void n(R2A03 *proc) { \
-	i(); o(); SETZ(result); SETN(result); proc->a.byte = result; }
-#define FN_ARITH_OP(n,i,o,v,c) void n(R2A03 *proc) { \
+#define FN_LOGIC_OP(n,i,o,cc) int n(R2A03 *proc) { \
+	i(); o(); SETZ(result); SETN(result); proc->a.byte = result; return cc;}
+#define FN_ARITH_OP(n,i,o,v,c,cc) int n(R2A03 *proc) { \
 	i(); o(); c(result); SETZ(result & 0xFF); \
-	SETN(result); v(); proc->a.byte = (unsigned char)(result&0xFF); }
-#define FN_LOAD_OP(n,i,r) void n(R2A03 *proc) { \
-	i(); r = byte; SETZ(r); SETN(r); }
-#define FN_STORE_OP(n,i,r) void n(R2A03 *proc) { \
-	i(); write_byte(proc,addr,r); }
-#define FN_SET_OP(n, f) void n(R2A03 *proc) { \
-	proc->p.bit.f = 1; }
-#define FN_CLEAR_OP(n, f) void n(R2A03 *proc) { \
-	proc->p.bit.f = 0; }
-#define FN_MEMORY_OP(n,i,o) void n(R2A03 *proc) { \
-	i(); o(); SETZ(result); SETN(result); write_byte(proc, addr, result); }
-#define FN_INC_REG_OP(n,r) void n(R2A03 *proc) { \
-	++r; SETZ(r); SETN(r); }
-#define FN_DEC_REG_OP(n,r) void n(R2A03 *proc) { \
-	--r; SETZ(r); SETN(r); }
-#define FN_XFER_OP(n,r1,r2) void n(R2A03 *proc) { \
-	SETZ(r1); SETN(r1); r2 = r1; }
-#define FN_BRANCH_OP(n,c) void n(R2A03 *proc) { \
+	SETN(result); v(); proc->a.byte = (unsigned char)(result&0xFF);  return cc;}
+#define FN_LOAD_OP(n,i,r,cc) int n(R2A03 *proc) { \
+	i(); r = byte; SETZ(r); SETN(r);  return cc;}
+#define FN_STORE_OP(n,i,r,cc) int n(R2A03 *proc) { \
+	i(); write_byte(proc,addr,r);  return cc;}
+#define FN_SET_OP(n, f,cc) int n(R2A03 *proc) { \
+	proc->p.bit.f = 1;  return cc;}
+#define FN_CLEAR_OP(n, f,cc) int n(R2A03 *proc) { \
+	proc->p.bit.f = 0;  return cc;}
+#define FN_MEMORY_OP(n,i,o,cc) int n(R2A03 *proc) { \
+	i(); o(); SETZ(result); SETN(result); write_byte(proc, addr, result);  return cc;}
+#define FN_INC_REG_OP(n,r,cc) int n(R2A03 *proc) { \
+	++r; SETZ(r); SETN(r);  return cc;}
+#define FN_DEC_REG_OP(n,r,cc) int n(R2A03 *proc) { \
+	--r; SETZ(r); SETN(r);  return cc;}
+#define FN_XFER_OP(n,r1,r2,cc) int n(R2A03 *proc) { \
+	SETZ(r1); SETN(r1); r2 = r1;  return cc;}
+#define FN_BRANCH_OP(n,c,cc) int n(R2A03 *proc) { \
 	signed char offs = fetch_next_byte(proc); \
-	if(c) { proc->pc.word = (unsigned short)((signed int)proc->pc.word + offs); } }
-#define FN_COMPARE_OP(n,i,o) void n(R2A03 *proc) { \
+	if(c) { proc->pc.word = (unsigned short)((signed int)proc->pc.word + offs); }  return cc;}
+#define FN_COMPARE_OP(n,i,o,cc) int n(R2A03 *proc) { \
 	i(); o(); SETC_S(result); SETZ(result & 0xFF); \
-	SETN(result);  }
+	SETN(result);   return cc;}
 	
 
-FN_BRANCH_OP(ih_beq, proc->p.bit.zero)
-FN_BRANCH_OP(ih_bne, !proc->p.bit.zero)
-FN_BRANCH_OP(ih_bvs, proc->p.bit.overflow)
-FN_BRANCH_OP(ih_bvc, !proc->p.bit.overflow)
-FN_BRANCH_OP(ih_bcs, proc->p.bit.carry)
-FN_BRANCH_OP(ih_bcc, !proc->p.bit.carry)
-FN_BRANCH_OP(ih_bmi, proc->p.bit.negative)
-FN_BRANCH_OP(ih_bpl, !proc->p.bit.negative)
+FN_BRANCH_OP(ih_beq, proc->p.bit.zero, 2)
+FN_BRANCH_OP(ih_bne, !proc->p.bit.zero, 2)
+FN_BRANCH_OP(ih_bvs, proc->p.bit.overflow, 2)
+FN_BRANCH_OP(ih_bvc, !proc->p.bit.overflow, 2)
+FN_BRANCH_OP(ih_bcs, proc->p.bit.carry, 2)
+FN_BRANCH_OP(ih_bcc, !proc->p.bit.carry, 2)
+FN_BRANCH_OP(ih_bmi, proc->p.bit.negative, 2)
+FN_BRANCH_OP(ih_bpl, !proc->p.bit.negative, 2)
 
-FN_SET_OP(ih_sec, carry)
-FN_CLEAR_OP(ih_clc, carry)
+FN_SET_OP(ih_sec, carry, 2)
+FN_CLEAR_OP(ih_clc, carry, 2)
 
 //overflow flag has no set instruction
-FN_CLEAR_OP(ih_clv, overflow)
+FN_CLEAR_OP(ih_clv, overflow, 2)
 
-FN_SET_OP(ih_sei, irq)
-FN_CLEAR_OP(ih_cli, irq)
+FN_SET_OP(ih_sei, irq, 2)
+FN_CLEAR_OP(ih_cli, irq, 2)
 
-FN_SET_OP(ih_sed, decimal)
-FN_CLEAR_OP(ih_cld, decimal)
+FN_SET_OP(ih_sed, decimal, 2)
+FN_CLEAR_OP(ih_cld, decimal, 2)
 
-FN_COMPARE_OP(ih_cmp_imm, INI_IMM, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_izx, INI_IZX, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_izy, INI_IZY, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_zp, INI_ZP, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_zpx, INI_ZPX, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_abs, INI_ABS, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_abx, INI_ABX, OP_SBCSA)
-FN_COMPARE_OP(ih_cmp_aby, INI_ABY, OP_SBCSA)
+FN_COMPARE_OP(ih_cmp_imm, INI_IMM, OP_SBCSA, 2)
+FN_COMPARE_OP(ih_cmp_izx, INI_IZX, OP_SBCSA, 6)
+FN_COMPARE_OP(ih_cmp_izy, INI_IZY, OP_SBCSA, 5)
+FN_COMPARE_OP(ih_cmp_zp, INI_ZP, OP_SBCSA, 3)
+FN_COMPARE_OP(ih_cmp_zpx, INI_ZPX, OP_SBCSA, 4)
+FN_COMPARE_OP(ih_cmp_abs, INI_ABS, OP_SBCSA, 4)
+FN_COMPARE_OP(ih_cmp_abx, INI_ABX, OP_SBCSA, 4)
+FN_COMPARE_OP(ih_cmp_aby, INI_ABY, OP_SBCSA, 4)
 
-FN_COMPARE_OP(ih_cpx_imm, INI_IMM, OP_SBCSX)
-FN_COMPARE_OP(ih_cpx_zp, INI_ZP, OP_SBCSX)
-FN_COMPARE_OP(ih_cpx_abs, INI_ABS, OP_SBCSX)
+FN_COMPARE_OP(ih_cpx_imm, INI_IMM, OP_SBCSX, 2)
+FN_COMPARE_OP(ih_cpx_zp, INI_ZP, OP_SBCSX, 3)
+FN_COMPARE_OP(ih_cpx_abs, INI_ABS, OP_SBCSX, 4)
 
-FN_COMPARE_OP(ih_cpy_imm, INI_IMM, OP_SBCSY)
-FN_COMPARE_OP(ih_cpy_zp, INI_ZP, OP_SBCSY)
-FN_COMPARE_OP(ih_cpy_abs, INI_ABS, OP_SBCSY)
+FN_COMPARE_OP(ih_cpy_imm, INI_IMM, OP_SBCSY, 2)
+FN_COMPARE_OP(ih_cpy_zp, INI_ZP, OP_SBCSY, 3)
+FN_COMPARE_OP(ih_cpy_abs, INI_ABS, OP_SBCSY, 4)
 
-FN_XFER_OP(ih_tax, proc->a.byte, proc->x.byte)
-FN_XFER_OP(ih_txa, proc->x.byte, proc->a.byte)
-FN_XFER_OP(ih_tay, proc->a.byte, proc->x.byte)
-FN_XFER_OP(ih_tya, proc->x.byte, proc->a.byte)
-FN_XFER_OP(ih_tsx, proc->s.byte, proc->x.byte)
-FN_XFER_OP(ih_txs, proc->x.byte, proc->s.byte)
+FN_XFER_OP(ih_tax, proc->a.byte, proc->x.byte, 2)
+FN_XFER_OP(ih_txa, proc->x.byte, proc->a.byte, 2)
+FN_XFER_OP(ih_tay, proc->a.byte, proc->x.byte, 2)
+FN_XFER_OP(ih_tya, proc->x.byte, proc->a.byte, 2)
+FN_XFER_OP(ih_tsx, proc->s.byte, proc->x.byte, 2)
+FN_XFER_OP(ih_txs, proc->x.byte, proc->s.byte, 2)
 
-FN_INC_REG_OP(ih_inx, proc->x.byte)
-FN_DEC_REG_OP(ih_dex, proc->x.byte)
-FN_INC_REG_OP(ih_iny, proc->y.byte)
-FN_DEC_REG_OP(ih_dey, proc->y.byte)
+FN_INC_REG_OP(ih_inx, proc->x.byte, 2)
+FN_DEC_REG_OP(ih_dex, proc->x.byte, 2)
+FN_INC_REG_OP(ih_iny, proc->y.byte, 2)
+FN_DEC_REG_OP(ih_dey, proc->y.byte, 2)
 
-FN_MEMORY_OP(ih_dec_zp, INI_ZP, OP_DEC)
-FN_MEMORY_OP(ih_dec_zpx, INI_ZPX, OP_DEC)
-FN_MEMORY_OP(ih_dec_abs, INI_ABS, OP_DEC)
-FN_MEMORY_OP(ih_dec_abx, INI_ABX, OP_DEC)
+FN_MEMORY_OP(ih_dec_zp, INI_ZP, OP_DEC, 5)
+FN_MEMORY_OP(ih_dec_zpx, INI_ZPX, OP_DEC, 6)
+FN_MEMORY_OP(ih_dec_abs, INI_ABS, OP_DEC, 3)
+FN_MEMORY_OP(ih_dec_abx, INI_ABX, OP_DEC, 7)
 
-FN_MEMORY_OP(ih_inc_zp, INI_ZP, OP_INC)
-FN_MEMORY_OP(ih_inc_zpx, INI_ZPX, OP_INC)
-FN_MEMORY_OP(ih_inc_abs, INI_ABS, OP_INC)
-FN_MEMORY_OP(ih_inc_abx, INI_ABX, OP_INC)
+FN_MEMORY_OP(ih_inc_zp, INI_ZP, OP_INC, 5)
+FN_MEMORY_OP(ih_inc_zpx, INI_ZPX, OP_INC, 6)
+FN_MEMORY_OP(ih_inc_abs, INI_ABS, OP_INC, 3)
+FN_MEMORY_OP(ih_inc_abx, INI_ABX, OP_INC, 7)
 
-FN_LOGIC_OP(ih_rol, INI_A, OP_ROL)
-FN_MEMORY_OP(ih_rol_zp, INI_ZP, OP_ROL)
-FN_MEMORY_OP(ih_rol_zpx, INI_ZPX, OP_ROL)
-FN_MEMORY_OP(ih_rol_abs, INI_ABS, OP_ROL)
-FN_MEMORY_OP(ih_rol_abx, INI_ABX, OP_ROL)
+FN_LOGIC_OP(ih_rol, INI_A, OP_ROL, 2)
+FN_MEMORY_OP(ih_rol_zp, INI_ZP, OP_ROL, 5)
+FN_MEMORY_OP(ih_rol_zpx, INI_ZPX, OP_ROL, 6)
+FN_MEMORY_OP(ih_rol_abs, INI_ABS, OP_ROL, 6)
+FN_MEMORY_OP(ih_rol_abx, INI_ABX, OP_ROL, 7)
 
-FN_LOGIC_OP(ih_ror, INI_A, OP_ROR)
-FN_MEMORY_OP(ih_ror_zp, INI_ZP, OP_ROR)
-FN_MEMORY_OP(ih_ror_zpx, INI_ZPX, OP_ROR)
-FN_MEMORY_OP(ih_ror_abs, INI_ABS, OP_ROR)
-FN_MEMORY_OP(ih_ror_abx, INI_ABX, OP_ROR)
+FN_LOGIC_OP(ih_ror, INI_A, OP_ROR, 2)
+FN_MEMORY_OP(ih_ror_zp, INI_ZP, OP_ROR, 5)
+FN_MEMORY_OP(ih_ror_zpx, INI_ZPX, OP_ROR, 6)
+FN_MEMORY_OP(ih_ror_abs, INI_ABS, OP_ROR, 6)
+FN_MEMORY_OP(ih_ror_abx, INI_ABX, OP_ROR, 7)
 
-FN_LOGIC_OP(ih_asl, INI_A, OP_ASL)
-FN_MEMORY_OP(ih_asl_zp, INI_ZP, OP_ASL)
-FN_MEMORY_OP(ih_asl_zpx, INI_ZPX, OP_ASL)
-FN_MEMORY_OP(ih_asl_abs, INI_ABS, OP_ASL)
-FN_MEMORY_OP(ih_asl_abx, INI_ABX, OP_ASL)
+FN_LOGIC_OP(ih_asl, INI_A, OP_ASL, 2)
+FN_MEMORY_OP(ih_asl_zp, INI_ZP, OP_ASL, 5)
+FN_MEMORY_OP(ih_asl_zpx, INI_ZPX, OP_ASL, 6)
+FN_MEMORY_OP(ih_asl_abs, INI_ABS, OP_ASL, 6)
+FN_MEMORY_OP(ih_asl_abx, INI_ABX, OP_ASL, 7)
 
-FN_LOGIC_OP(ih_lsr, INI_A, OP_LSR)
-FN_MEMORY_OP(ih_lsr_zp, INI_ZP, OP_LSR)
-FN_MEMORY_OP(ih_lsr_zpx, INI_ZPX, OP_LSR)
-FN_MEMORY_OP(ih_lsr_abs, INI_ABS, OP_LSR)
-FN_MEMORY_OP(ih_lsr_abx, INI_ABX, OP_LSR)
+FN_LOGIC_OP(ih_lsr, INI_A, OP_LSR, 2)
+FN_MEMORY_OP(ih_lsr_zp, INI_ZP, OP_LSR, 5)
+FN_MEMORY_OP(ih_lsr_zpx, INI_ZPX, OP_LSR, 6)
+FN_MEMORY_OP(ih_lsr_abs, INI_ABS, OP_LSR, 6)
+FN_MEMORY_OP(ih_lsr_abx, INI_ABX, OP_LSR, 7)
 
-FN_LOGIC_OP(ih_ora_imm, INI_IMM, OP_ORA)
-FN_LOGIC_OP(ih_ora_izx, INI_IZX, OP_ORA)
-FN_LOGIC_OP(ih_ora_izy, INI_IZY, OP_ORA)
-FN_LOGIC_OP(ih_ora_zp, INI_ZP, OP_ORA)
-FN_LOGIC_OP(ih_ora_zpx, INI_ZPX, OP_ORA)
-FN_LOGIC_OP(ih_ora_abs, INI_ABS, OP_ORA)
-FN_LOGIC_OP(ih_ora_abx, INI_ABX, OP_ORA)
-FN_LOGIC_OP(ih_ora_aby, INI_ABY, OP_ORA)
+FN_LOGIC_OP(ih_ora_imm, INI_IMM, OP_ORA, 2)
+FN_LOGIC_OP(ih_ora_izx, INI_IZX, OP_ORA, 6)
+FN_LOGIC_OP(ih_ora_izy, INI_IZY, OP_ORA, 5)
+FN_LOGIC_OP(ih_ora_zp, INI_ZP, OP_ORA, 3)
+FN_LOGIC_OP(ih_ora_zpx, INI_ZPX, OP_ORA, 4)
+FN_LOGIC_OP(ih_ora_abs, INI_ABS, OP_ORA, 4)
+FN_LOGIC_OP(ih_ora_abx, INI_ABX, OP_ORA, 4)
+FN_LOGIC_OP(ih_ora_aby, INI_ABY, OP_ORA, 4)
 
-FN_LOGIC_OP(ih_and_imm, INI_IMM, OP_AND)
-FN_LOGIC_OP(ih_and_izx, INI_IZX, OP_AND)
-FN_LOGIC_OP(ih_and_izy, INI_IZY, OP_AND)
-FN_LOGIC_OP(ih_and_zp, INI_ZP, OP_AND)
-FN_LOGIC_OP(ih_and_zpx, INI_ZPX, OP_AND)
-FN_LOGIC_OP(ih_and_abs, INI_ABS, OP_AND)
-FN_LOGIC_OP(ih_and_abx, INI_ABX, OP_AND)
-FN_LOGIC_OP(ih_and_aby, INI_ABY, OP_AND)
+FN_LOGIC_OP(ih_and_imm, INI_IMM, OP_AND, 2)
+FN_LOGIC_OP(ih_and_izx, INI_IZX, OP_AND, 6)
+FN_LOGIC_OP(ih_and_izy, INI_IZY, OP_AND, 5)
+FN_LOGIC_OP(ih_and_zp, INI_ZP, OP_AND, 3)
+FN_LOGIC_OP(ih_and_zpx, INI_ZPX, OP_AND, 4)
+FN_LOGIC_OP(ih_and_abs, INI_ABS, OP_AND, 4)
+FN_LOGIC_OP(ih_and_abx, INI_ABX, OP_AND, 4)
+FN_LOGIC_OP(ih_and_aby, INI_ABY, OP_AND, 4)
 
-FN_LOGIC_OP(ih_eor_imm, INI_IMM, OP_EOR)
-FN_LOGIC_OP(ih_eor_izx, INI_IZX, OP_EOR)
-FN_LOGIC_OP(ih_eor_izy, INI_IZY, OP_EOR)
-FN_LOGIC_OP(ih_eor_zp, INI_ZP, OP_EOR)
-FN_LOGIC_OP(ih_eor_zpx, INI_ZPX, OP_EOR)
-FN_LOGIC_OP(ih_eor_abs, INI_ABS, OP_EOR)
-FN_LOGIC_OP(ih_eor_abx, INI_ABX, OP_EOR)
-FN_LOGIC_OP(ih_eor_aby, INI_ABY, OP_EOR)
+FN_LOGIC_OP(ih_eor_imm, INI_IMM, OP_EOR, 2)
+FN_LOGIC_OP(ih_eor_izx, INI_IZX, OP_EOR, 6)
+FN_LOGIC_OP(ih_eor_izy, INI_IZY, OP_EOR, 5)
+FN_LOGIC_OP(ih_eor_zp, INI_ZP, OP_EOR, 3)
+FN_LOGIC_OP(ih_eor_zpx, INI_ZPX, OP_EOR, 4)
+FN_LOGIC_OP(ih_eor_abs, INI_ABS, OP_EOR, 4)
+FN_LOGIC_OP(ih_eor_abx, INI_ABX, OP_EOR, 4)
+FN_LOGIC_OP(ih_eor_aby, INI_ABY, OP_EOR, 4)
 
-FN_ARITH_OP(ih_adc_imm, INI_IMM, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_izx, INI_IZX, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_izy, INI_IZY, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_zp, INI_ZP, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_zpx, INI_ZPX, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_abs, INI_ABS, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_abx, INI_ABX, OP_ADC, SETV_A, SETC_A)
-FN_ARITH_OP(ih_adc_aby, INI_ABY, OP_ADC, SETV_A, SETC_A)
+FN_ARITH_OP(ih_adc_imm, INI_IMM, OP_ADC, SETV_A, SETC_A, 2)
+FN_ARITH_OP(ih_adc_izx, INI_IZX, OP_ADC, SETV_A, SETC_A, 6)
+FN_ARITH_OP(ih_adc_izy, INI_IZY, OP_ADC, SETV_A, SETC_A, 5)
+FN_ARITH_OP(ih_adc_zp, INI_ZP, OP_ADC, SETV_A, SETC_A, 3)
+FN_ARITH_OP(ih_adc_zpx, INI_ZPX, OP_ADC, SETV_A, SETC_A, 4)
+FN_ARITH_OP(ih_adc_abs, INI_ABS, OP_ADC, SETV_A, SETC_A, 4)
+FN_ARITH_OP(ih_adc_abx, INI_ABX, OP_ADC, SETV_A, SETC_A, 4)
+FN_ARITH_OP(ih_adc_aby, INI_ABY, OP_ADC, SETV_A, SETC_A, 4)
 
-FN_ARITH_OP(ih_sbc_imm, INI_IMM, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_izx, INI_IZX, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_izy, INI_IZY, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_zp, INI_ZP, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_zpx, INI_ZPX, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_abs, INI_ABS, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_abx, INI_ABX, OP_SBC, SETV_S, SETC_S)
-FN_ARITH_OP(ih_sbc_aby, INI_ABY, OP_SBC, SETV_S, SETC_S)
+FN_ARITH_OP(ih_sbc_imm, INI_IMM, OP_SBC, SETV_S, SETC_S, 2)
+FN_ARITH_OP(ih_sbc_izx, INI_IZX, OP_SBC, SETV_S, SETC_S, 6)
+FN_ARITH_OP(ih_sbc_izy, INI_IZY, OP_SBC, SETV_S, SETC_S, 5)
+FN_ARITH_OP(ih_sbc_zp, INI_ZP, OP_SBC, SETV_S, SETC_S, 3)
+FN_ARITH_OP(ih_sbc_zpx, INI_ZPX, OP_SBC, SETV_S, SETC_S, 4)
+FN_ARITH_OP(ih_sbc_abs, INI_ABS, OP_SBC, SETV_S, SETC_S, 4)
+FN_ARITH_OP(ih_sbc_abx, INI_ABX, OP_SBC, SETV_S, SETC_S, 4)
+FN_ARITH_OP(ih_sbc_aby, INI_ABY, OP_SBC, SETV_S, SETC_S, 4)
 
-FN_LOAD_OP(ih_lda_imm, INI_IMM, proc->a.byte)
-FN_LOAD_OP(ih_lda_izx, INI_IZX, proc->a.byte)
-FN_LOAD_OP(ih_lda_izy, INI_IZY, proc->a.byte)
-FN_LOAD_OP(ih_lda_zp, INI_ZP, proc->a.byte)
-FN_LOAD_OP(ih_lda_zpx, INI_ZPX, proc->a.byte)
-FN_LOAD_OP(ih_lda_abs, INI_ABS, proc->a.byte)
-FN_LOAD_OP(ih_lda_abx, INI_ABX, proc->a.byte)
-FN_LOAD_OP(ih_lda_aby, INI_ABY, proc->a.byte)
+FN_LOAD_OP(ih_lda_imm, INI_IMM, proc->a.byte, 2)
+FN_LOAD_OP(ih_lda_izx, INI_IZX, proc->a.byte, 6)
+FN_LOAD_OP(ih_lda_izy, INI_IZY, proc->a.byte, 5)
+FN_LOAD_OP(ih_lda_zp, INI_ZP, proc->a.byte, 3)
+FN_LOAD_OP(ih_lda_zpx, INI_ZPX, proc->a.byte, 4)
+FN_LOAD_OP(ih_lda_abs, INI_ABS, proc->a.byte, 4)
+FN_LOAD_OP(ih_lda_abx, INI_ABX, proc->a.byte, 4)
+FN_LOAD_OP(ih_lda_aby, INI_ABY, proc->a.byte, 4)
 
-FN_LOAD_OP(ih_ldx_imm, INI_IMM, proc->x.byte)
-FN_LOAD_OP(ih_ldx_zp, INI_ZP, proc->x.byte)
-FN_LOAD_OP(ih_ldx_zpy, INI_ZPY, proc->x.byte)
-FN_LOAD_OP(ih_ldx_abs, INI_ABS, proc->x.byte)
-FN_LOAD_OP(ih_ldx_aby, INI_ABY, proc->x.byte)
+FN_LOAD_OP(ih_ldx_imm, INI_IMM, proc->x.byte, 2)
+FN_LOAD_OP(ih_ldx_zp, INI_ZP, proc->x.byte, 3)
+FN_LOAD_OP(ih_ldx_zpy, INI_ZPY, proc->x.byte, 4)
+FN_LOAD_OP(ih_ldx_abs, INI_ABS, proc->x.byte, 4)
+FN_LOAD_OP(ih_ldx_aby, INI_ABY, proc->x.byte, 4)
 
-FN_LOAD_OP(ih_ldy_imm, INI_IMM, proc->x.byte)
-FN_LOAD_OP(ih_ldy_zp, INI_ZP, proc->x.byte)
-FN_LOAD_OP(ih_ldy_zpx, INI_ZPX, proc->x.byte)
-FN_LOAD_OP(ih_ldy_abs, INI_ABS, proc->x.byte)
-FN_LOAD_OP(ih_ldy_abx, INI_ABX, proc->x.byte)
+FN_LOAD_OP(ih_ldy_imm, INI_IMM, proc->x.byte, 2)
+FN_LOAD_OP(ih_ldy_zp, INI_ZP, proc->x.byte, 3)
+FN_LOAD_OP(ih_ldy_zpx, INI_ZPX, proc->x.byte, 4)
+FN_LOAD_OP(ih_ldy_abs, INI_ABS, proc->x.byte, 4)
+FN_LOAD_OP(ih_ldy_abx, INI_ABX, proc->x.byte, 4)
 
-FN_STORE_OP(ih_sta_zp, INI_IZP, proc->a.byte)
-FN_STORE_OP(ih_sta_zpx, INI_IZPX, proc->a.byte)
-FN_STORE_OP(ih_sta_abs, INI_IABS, proc->a.byte)
-FN_STORE_OP(ih_sta_abx, INI_IABX, proc->a.byte)
-FN_STORE_OP(ih_sta_aby, INI_IABY, proc->a.byte)
-FN_STORE_OP(ih_sta_izx, INI_IIZX, proc->a.byte)
-FN_STORE_OP(ih_sta_izy, INI_IIZY, proc->a.byte)
+FN_STORE_OP(ih_sta_zp, INI_IZP, proc->a.byte, 3)
+FN_STORE_OP(ih_sta_zpx, INI_IZPX, proc->a.byte, 4)
+FN_STORE_OP(ih_sta_abs, INI_IABS, proc->a.byte, 4)
+FN_STORE_OP(ih_sta_abx, INI_IABX, proc->a.byte, 5)
+FN_STORE_OP(ih_sta_aby, INI_IABY, proc->a.byte, 5)
+FN_STORE_OP(ih_sta_izx, INI_IIZX, proc->a.byte, 6)
+FN_STORE_OP(ih_sta_izy, INI_IIZY, proc->a.byte, 6)
 
-FN_STORE_OP(ih_stx_zp, INI_IZP, proc->x.byte)
-FN_STORE_OP(ih_stx_zpy, INI_IZPY, proc->x.byte)
-FN_STORE_OP(ih_stx_abs, INI_IABS, proc->x.byte)
+FN_STORE_OP(ih_stx_zp, INI_IZP, proc->x.byte, 3)
+FN_STORE_OP(ih_stx_zpy, INI_IZPY, proc->x.byte, 4)
+FN_STORE_OP(ih_stx_abs, INI_IABS, proc->x.byte, 4)
 
-FN_STORE_OP(ih_sty_zp, INI_IZP, proc->y.byte)
-FN_STORE_OP(ih_sty_zpx, INI_IZPX, proc->y.byte)
-FN_STORE_OP(ih_sty_abs, INI_IABS, proc->y.byte)
+FN_STORE_OP(ih_sty_zp, INI_IZP, proc->y.byte, 3)
+FN_STORE_OP(ih_sty_zpx, INI_IZPX, proc->y.byte, 4)
+FN_STORE_OP(ih_sty_abs, INI_IABS, proc->y.byte, 4)
 
 /*
 	BRK handler
 */
-void ih_brk(R2A03 *proc)
+int ih_brk(R2A03 *proc)
 {
 	//todo
+	return 1;
 }
 
 /*
 	NOP handler
 */
-void ih_nop(R2A03 *proc)
+int ih_nop(R2A03 *proc)
 {
-	//do nothing
+	return 2;
 }
 
 /*
 	PHP handler
 */
-void ih_php(R2A03 *proc)
+int ih_php(R2A03 *proc)
 {
 	push(proc, proc->p.byte);
+	return 3;
 }
 
 /*
 	BIT handler
 */
-void ih_bit_abs(R2A03 *proc)
+int ih_bit_abs(R2A03 *proc)
 {
 	unsigned short addr = fetch_next_word(proc);
 	unsigned char byte = fetch_byte(proc, addr);
 	SETN(byte);
 	proc->p.bit.overflow = byte & 0x40;
 	proc->p.bit.zero = byte & proc->a.byte;
+	return 4;
 }
 
 /*
 	BIT handler
 */
-void ih_bit_zp(R2A03 *proc)
+int ih_bit_zp(R2A03 *proc)
 {
 	unsigned char addr = fetch_next_byte(proc);
 	unsigned char byte = fetch_byte(proc, (unsigned short)addr);
 	SETN(byte);
 	proc->p.bit.overflow = byte & 0x40;
 	proc->p.bit.zero = byte & proc->a.byte;
+	return 3;
 }
 
 /*
 	JMP handler
 */
-void ih_jmp_imm(R2A03 *proc)
+int ih_jmp_imm(R2A03 *proc)
 {
 	unsigned short addr = fetch_next_word(proc);
 	proc->pc.word = addr;
+	return 3;
 }
 
 /*
 	JMP handler
 */
-void ih_jmp_ind(R2A03 *proc)
+int ih_jmp_ind(R2A03 *proc)
 {
 	unsigned short addr = fetch_next_word(proc);
 	unsigned short word = fetch_word(proc, addr);
 	proc->pc.word = word;
+	return 5;
 }
 
 /*
 	JSR handler
 */
-void ih_jsr(R2A03 *proc)
+int ih_jsr(R2A03 *proc)
 {
 	unsigned short addr = fetch_next_word(proc);
 	push(proc, ((proc->pc.word--)>>8)&0xFF);
 	push(proc, proc->pc.word&0xFF);
 	proc->pc.word = addr;
+	return 6;
 }
 
 /*
 	RTS handler
 */
-void ih_rts(R2A03 *proc)
+int ih_rts(R2A03 *proc)
 {
 	unsigned short addr = pull(proc);
 	addr += (pull(proc) << 8) + 1;
 	proc->pc.word = addr;
+	return 6;
 }
 
 /*
 	RTI handler
 */
-void ih_rti(R2A03 *proc)
+int ih_rti(R2A03 *proc)
 {
 	unsigned short addr;
 	proc->p.byte = pull(proc);
 	addr = pull(proc);
 	addr |= pull(proc) << 8;
 	proc->pc.word = addr;
+	return 6;
 }
 
 /*
 	PLP handler
 */
-void ih_plp(R2A03 *proc)
+int ih_plp(R2A03 *proc)
 {
 	proc->p.byte = pull(proc);
+	return 4;
 }
 
 /*
 	PHA handler
 */
-void ih_pha(R2A03 *proc)
+int ih_pha(R2A03 *proc)
 {
 	push(proc, proc->a.byte);
+	return 3;
 }
 
 /*
 	PLA handler
 */
-void ih_pla(R2A03 *proc)
+int ih_pla(R2A03 *proc)
 {
 	unsigned char byte = pull(proc);
 	SETN(byte);
 	SETZ(byte);
 	proc->a.byte = byte;
+	return 4;
 }
 
-static const instructionHandler ih[256] = {
+static instructionHandler ih[256] = {
 //	00				01				02				03				04				05				06				07
 	&ih_brk,		&ih_ora_izx,	&ih_brk,		&ih_brk,		&ih_brk,		&ih_ora_zp,		&ih_asl_zp,		&ih_brk,
 //	08				09				0A				0B				0C				0D				0E				0F

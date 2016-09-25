@@ -88,7 +88,7 @@ int main(int argc, char **argv)
 	initialize(proc, memory);
 	reset(proc);
 
-	if(SDL_Init(SDL_INIT_VIDEO) != 0) {
+	if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
 		printf("Error: Call to SDL_Init() failed\n\n");
 		return 1;
 	}
@@ -96,8 +96,11 @@ int main(int argc, char **argv)
 	printf("Initializing...\n", argv[1]);
 	{
 		int i=0;
-		
+		int cycles=0,ppucycles=0;
+		int stage=0;
 		SDL_Window *win;
+		Uint64 start_time=0,last_time=0;
+		Uint64 freq=SDL_GetPerformanceFrequency();
 
 		if(SDL_CreateWindowAndRenderer(512, 480, SDL_WINDOW_SHOWN, &win, &renderer)) {
 			printf("Error: SDL window initialization failed.\n\n");
@@ -108,23 +111,39 @@ int main(int argc, char **argv)
 			//main execution loop
 			SDL_Event sEvent;
 
+			last_time = SDL_GetPerformanceCounter();
+			if((double)(last_time-start_time) / freq < 0.1) {
+				continue;
+			} else {
+				start_time = last_time;
+			}
+
 			if(fetch_byte(proc, proc->pc.word) == 0) {
 				printf("Processor encountered BRK at PC=$%0.4X.\nHalted.\n\n", proc->pc.word);
 				break;
 			}
 			if(proc->critical == 1) {
 				printf("PC=$%0.4X\nA=#$%0.2X X=#$%0.2X Y=#$%0.2X\n", proc->pc.word, proc->a.byte, proc->x.byte, proc->y.byte);
-				printf("%d%d%d%d%d%d%d%d\nSV?BDIZC\n\n", proc->p.bit.negative, proc->p.bit.overflow, proc->p.bit.unused, proc->p.bit.brkflag, proc->p.bit.decimal, proc->p.bit.irq, proc->p.bit.zero, proc->p.bit.carry);
+				printf("%d%d%d%d%d%d%d%d\nSV?BDIZC\n", proc->p.bit.negative, proc->p.bit.overflow, proc->p.bit.unused, proc->p.bit.brkflag, proc->p.bit.decimal, proc->p.bit.irq, proc->p.bit.zero, proc->p.bit.carry);
 
 				printf("Processor encountered invalid/unimplemented instruction. Halted.\n\n");
+				break;
 			}
-			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-			SDL_RenderClear(renderer);
-			SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-			cycle(proc);
-			SDL_RenderPresent(renderer);
+
 			if(SDL_PollEvent(&sEvent) && sEvent.type == SDL_QUIT) {
 				break;
+			}
+
+			if(!cycles) {
+				cycles = cycle(proc);
+			}
+			--cycles;
+
+			if(!ppucycles)
+			{
+				SDL_RenderClear(renderer);
+				//do rendering
+				SDL_RenderPresent(renderer);
 			}
 		}
 
