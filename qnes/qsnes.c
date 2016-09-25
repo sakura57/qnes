@@ -5,12 +5,13 @@
 #include "SDL.h"
 
 SDL_Renderer *renderer;
+static const char header[] = {'N', 'E', 'S', 0x1A};
 
 void draw_pixel(int x, int y)
 {
 	SDL_Rect rect;
-	rect.x = x;
-	rect.y = y;
+	rect.x = x*2;
+	rect.y = y*2;
 	rect.w = rect.h = 2;
 	SDL_RenderDrawRect(renderer, &rect);
 }
@@ -20,11 +21,15 @@ int main(int argc, char **argv)
 	FILE *romfile;
 	unsigned char *filedata;
 	long size;
+	unsigned char *memory;	//allocate 64 KB to use as system RAM
+	unsigned char *ppumem;	//allocate 16 KB for PPU memory
+	R2A03 * proc;
+	char prgbanks=0,chrbanks=0;
 
-	printf("qnes v0.1a\nJacob Farnsworth\n");
+	printf("qnes v0.1a\nJacob Farnsworth\n\n");
 
 	if(argc != 2) {
-		printf("Syntax: qnes <romfile>\n");
+		printf("Syntax: qnes <romfile>\n\n");
 		return 0;
 	}
 
@@ -38,9 +43,50 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	filedata = (unsigned char *)malloc(size);
+	printf("Loading \"%s\"...\n", argv[1]);
 
+	filedata = (unsigned char *)malloc(size);
+	fread(filedata, 1, size, romfile);
 	fclose(romfile);
+
+	if(memcmp(filedata, header, 4)) {
+		printf("Error: Invalid iNES header.\n\n");
+		return 1;
+	}
+
+	printf("Valid iNES header.\n");
+
+	prgbanks = filedata[4];
+	chrbanks = filedata[5];
+
+	printf("16KB PRG-ROM banks: %d\n8KB CHR-ROM banks: %d\n", prgbanks, chrbanks);
+
+	if(prgbanks < 1 || prgbanks < 2 || chrbanks != 1) {
+		printf("Error: This ROM's PRG-ROM/CHR-ROM arrangement is unsupported.\n");
+		printf("The supported arrangements are: \n");
+		printf("16KB PRG-ROM & 8KB CHR-ROM\n");
+		printf("32KB PRG-ROM & 8KB CHR-ROM\n");
+		printf("\n");
+		return 1;
+	}
+
+	printf("PRG-ROM/CHR-ROM arrangement is supported\n");
+
+	memory = (unsigned char*)malloc(0x10000);
+	ppumem = (unsigned char*)malloc(0x4000);
+	proc = (R2A03*)malloc(sizeof(R2A03));
+
+	if(!memory || !ppumem || !proc) {
+		printf("Error: Memory allocation failed.\nSystem out of memory?\n\n");
+		return 1;
+	}
+
+	memset(memory, 0, 0x10000);
+	memset(ppumem, 0, 0x2000);
+	memcpy(&memory[0x8000], &filedata[0x10], 0x4000*prgbanks);
+	memcpy(&ppumem[0x2000], &filedata[0x10+0x4000*prgbanks], 0x800*chrbanks);
+	initialize(proc, memory);
+	reset(proc);
 
 	if(SDL_Init(SDL_INIT_VIDEO) != 0) {
 		printf("Error: Call to SDL_Init() failed\n\n");
@@ -50,19 +96,8 @@ int main(int argc, char **argv)
 	printf("Initializing...\n", argv[1]);
 	{
 		int i=0;
-		void * memory = malloc(0x10000);	//allocate 64 KB to use as system RAM
-		R2A03 * proc = (R2A03*)malloc(sizeof(R2A03));
+		
 		SDL_Window *win;
-
-		if(!memory || !proc) {
-			printf("Error: Memory allocation failed.\nSystem out of memory?\n\n");
-			return 1;
-		}
-
-		memset(memory, 0, 0x10000);
-		initialize(proc, memory);
-		set_reset_vector(proc, makeword(0x600));
-		reset(proc);
 
 		if(SDL_CreateWindowAndRenderer(512, 480, SDL_WINDOW_SHOWN, &win, &renderer)) {
 			printf("Error: SDL window initialization failed.\n\n");
@@ -99,6 +134,8 @@ int main(int argc, char **argv)
 		SDL_DestroyWindow(win);
 	}
 	SDL_Quit();
+
+	free(filedata);
 	
 	return 0;
 }
